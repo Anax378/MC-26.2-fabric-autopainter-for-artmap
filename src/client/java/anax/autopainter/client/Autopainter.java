@@ -70,14 +70,17 @@ class Autopainter {
 		}
 		if(paintingThread == null && !session.paused){
 			sendMessage("session loaded (waiting for /autopaint start)");
+			session.reportEstimatedDuration();
 			return;
 		}
 		if(session.paused){
 			sendMessage("session is paused");
+			session.reportEstimatedDuration();
 			return;
 		}
 		if(session.ended){
 			sendMessage("session ended");
+			return;
 		}
 		sendMessage("session is running");
 		session.reportEstimatedDuration();
