@@ -18,7 +18,7 @@ A preview tool for painted images is available here: https://anax378.github.io/M
    Example: `/autopaint load test.png`
 
    The mod will tell you which items you'll need and estimate how long the painting will take.
-3. Sit at an easel with a prepared canvas, then start painting:
+3. Place and sit on an easel **FACING SOUTH** with a prepared canvas, then start painting:
    ```
    /autopaint start
    ```
