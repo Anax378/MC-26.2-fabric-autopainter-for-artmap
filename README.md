@@ -1,4 +1,4 @@
-# autopainter
+# Autopainter
 
 A Fabric mod that helps you create images using the **ArtMap** plugin. Only 128x128 images are supported.
 
@@ -41,6 +41,10 @@ The mod automatically detects dyes in your inventory and starts with whatever is
 
 - Some pixels are occasionally missed — usually 2–3 per image — and require manual correction.
 - The bottom-left pixel is frequently missed and often needs manual correction.
+
+## Showcase
+
+![Showcase](./media/autopainter-recording.gif)
 
 ## License
 
