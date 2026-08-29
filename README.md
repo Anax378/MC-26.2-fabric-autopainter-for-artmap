@@ -36,9 +36,6 @@ The mod automatically detects dyes in your inventory and starts with whatever is
 | `/autopaint resume` | Resume a paused session, or continue after the mod requests more dyes/items. |
 | `/autopaint status` | Check the current status: paused, running, not loaded, or waiting to start. If a session is active, this also shows the estimated remaining time. |
 
-## Showcase (OLD)
-
-![Showcase](./media/autopainter-recording.gif)
 
 ## License
 
