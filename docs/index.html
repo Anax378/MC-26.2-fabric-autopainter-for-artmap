@@ -285,7 +285,7 @@
     <span class="panel-label">Build Info</span>
     <div class="stats-grid">
       <div class="stat-col">
-        <strong>Estimated Time (may vary by a few minutes, gemini cant get the javascript right)</strong>
+        <strong>Estimated Time</strong>
         <div id="timeEst" class="stat-val">--</div>
         <div id="timeSub" class="stat-sub">Using 5x5 brush optimization</div>
       </div>
@@ -389,43 +389,42 @@
     return parts.length ? parts.join(" ") : "0s";
   }
 
-  // --- DP Square Cover Solvers (ported directly from Java) ---
+  // --- DP Square Cover Solvers (Now strictly matching Java's X/Y axis array indexing) ---
 
-  // Memory efficient 2D bool array initialization
+  // Equivalent to `new boolean[w][h]`
   function create2DArray(w, h) {
-    let arr = new Array(h);
-    for(let i=0; i<h; i++) {
-      arr[i] = new Uint8Array(w);
+    let arr = new Array(w);
+    for(let i = 0; i < w; i++) {
+      arr[i] = new Uint8Array(h);
     }
     return arr;
   }
 
-  function buildValid(bitmap, rows, cols, maxSize) {
+  function buildValid(bitmap, w, h, maxSize) {
     let valid = new Array(maxSize + 1);
-    for (let s = 1; s <= maxSize; s++) valid[s] = create2DArray(cols, rows);
+    for (let s = 1; s <= maxSize; s++) valid[s] = create2DArray(w, h);
     
-    // Size 1 base cases
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        valid[1][r][c] = bitmap[r][c];
+    for (let x = 0; x < w; x++) {
+      for (let y = 0; y < h; y++) {
+        valid[1][x][y] = bitmap[x][y];
       }
     }
-    // Size > 1 DP combination
+    
     for (let s = 2; s <= maxSize; s++) {
-      for (let r = 0; r <= rows - s; r++) {
-        for (let c = 0; c <= cols - s; c++) {
-          valid[s][r][c] = (valid[s-1][r][c] && valid[s-1][r+1][c] && 
-                            valid[s-1][r][c+1] && valid[s-1][r+1][c+1]) ? 1 : 0;
+      for (let x = 0; x <= w - s; x++) {
+        for (let y = 0; y <= h - s; y++) {
+          valid[s][x][y] = (valid[s-1][x][y] && valid[s-1][x+1][y] && 
+                            valid[s-1][x][y+1] && valid[s-1][x+1][y+1]) ? 1 : 0;
         }
       }
     }
     return valid;
   }
 
-  function solve(bitmap, rows, cols) {
+  function solve(bitmap, w, h) {
     const maxSize = 5;
-    const valid = buildValid(bitmap, rows, cols, maxSize);
-    let covered = create2DArray(cols, rows);
+    const valid = buildValid(bitmap, w, h, maxSize);
+    let covered = create2DArray(w, h);
     let squareCount = 0;
 
     for (let s = maxSize; s >= 1; s--) {
@@ -433,19 +432,20 @@
         let placedAny = true;
         while (placedAny) {
           placedAny = false;
-          for (let r = 0; r <= rows - s; r++) {
-            for (let c = 0; c <= cols - s; c++) {
-              if (valid[s][r][c]) {
+          // Sweep order must match Java to ensure greedy algorithm breaks ties identically
+          for (let x = 0; x <= w - s; x++) {
+            for (let y = 0; y <= h - s; y++) {
+              if (valid[s][x][y]) {
                 let uncoveredCount = 0;
                 for (let i = 0; i < s; i++) {
                   for (let j = 0; j < s; j++) {
-                    if (!covered[r + i][c + j]) uncoveredCount++;
+                    if (!covered[x + i][y + j]) uncoveredCount++;
                   }
                 }
                 if (uncoveredCount >= threshold) {
                   for (let i = 0; i < s; i++) {
                     for (let j = 0; j < s; j++) {
-                      covered[r + i][c + j] = 1;
+                      covered[x + i][y + j] = 1;
                     }
                   }
                   squareCount++;
@@ -460,20 +460,20 @@
     return squareCount;
   }
 
-  function solveDisjoint(bitmap, rows, cols) {
+  function solveDisjoint(bitmap, w, h) {
     const maxSize = 5;
-    const valid = buildValid(bitmap, rows, cols, maxSize);
-    let covered = create2DArray(cols, rows);
+    const valid = buildValid(bitmap, w, h, maxSize);
+    let covered = create2DArray(w, h);
     let squareCount = 0;
 
     for (let s = maxSize; s >= 1; s--) {
-      for (let r = 0; r <= rows - s; r++) {
-        for (let c = 0; c <= cols - s; c++) {
-          if (valid[s][r][c]) {
+      for (let x = 0; x <= w - s; x++) {
+        for (let y = 0; y <= h - s; y++) {
+          if (valid[s][x][y]) {
             let overlaps = false;
             for (let i = 0; i < s; i++) {
               for (let j = 0; j < s; j++) {
-                if (covered[r + i][c + j]) {
+                if (covered[x + i][y + j]) {
                   overlaps = true;
                   break;
                 }
@@ -483,11 +483,11 @@
             if (!overlaps) {
               for (let i = 0; i < s; i++) {
                 for (let j = 0; j < s; j++) {
-                  covered[r + i][c + j] = 1;
+                  covered[x + i][y + j] = 1;
                 }
               }
               squareCount++;
-              c += (s - 1); // skip columns
+              y += (s - 1); // Skip y-columns exactly as Java's c += (s-1) does
             }
           }
         }
@@ -502,7 +502,6 @@
     const h = imageData.height;
     const requiredItems = new Set();
     
-    // 2D grids (1 per color/shift used)
     const baseBitmaps = {};
     const shiftBitmaps = {
       '-2': create2DArray(w, h),
@@ -510,67 +509,69 @@
       '1':  create2DArray(w, h)
     };
 
-    // Construct the pixel map
     for(let y = 0; y < h; y++){
       for(let x = 0; x < w; x++){
         const i = (y * w + x) * 4;
-        const r = data[i], g = data[i+1], b = data[i+2], a = data[i+3];
+        const a = data[i+3];
         
-        if(a === 0){
-          data[i]=0; data[i+1]=0; data[i+2]=0; data[i+3]=0;
-          continue;
-        }
-        
-        let bestIdx = 0;
-        let bestDist = Infinity;
-        for(let p = 0; p < OPAQUE.length; p++){
-          const c = OPAQUE[p];
-          const d = distance(c.r, c.g, c.b, r,g,b);
-          if(d < bestDist){ bestDist = d; bestIdx = p; }
-        }
-        
-        const best = OPAQUE[bestIdx];
-        data[i] = best.r; data[i+1] = best.g; data[i+2] = best.b; data[i+3] = 255;
-
-        // Resolve IDs for algorithm
-        const mcid = best.mcid;
-        const baseId = Math.floor(mcid / 4);
-        const shade = mcid % 4;
-
+        let baseId = 0;
         let shift = 0;
-        if(shade === 0) shift = -1;
-        else if(shade === 1) shift = 0;
-        else if(shade === 2) shift = 1;
-        else if(shade === 3) shift = -2;
+        
+        // Critical Fix: Transparent pixels map to VOID (id 0) with a shift of 0
+        if (a === 0) {
+          baseId = 0; 
+          shift = 0;
+          // Render remains transparent visually
+          data[i]=0; data[i+1]=0; data[i+2]=0; data[i+3]=0;
+        } else {
+          const r = data[i], g = data[i+1], b = data[i+2];
+          
+          let bestIdx = 0;
+          let bestDist = Infinity;
+          for(let p = 0; p < OPAQUE.length; p++){
+            const c = OPAQUE[p];
+            const d = distance(c.r, c.g, c.b, r,g,b);
+            if(d < bestDist){ bestDist = d; bestIdx = p; }
+          }
+          
+          const best = OPAQUE[bestIdx];
+          data[i] = best.r; data[i+1] = best.g; data[i+2] = best.b; data[i+3] = 255;
+
+          const mcid = best.mcid;
+          baseId = Math.floor(mcid / 4);
+          const shade = mcid % 4;
+
+          if(shade === 0) shift = -1;
+          else if(shade === 1) shift = 0;
+          else if(shade === 2) shift = 1;
+          else if(shade === 3) shift = -2;
+        }
 
         requiredItems.add(BASE_ITEMS[baseId]);
         if (shift < 0) requiredItems.add("Coal");
         if (shift > 0) requiredItems.add("Feather");
 
-        // Populate grids
+        // Fill X/Y matrix to match Java exactly
         if (!baseBitmaps[baseId]) baseBitmaps[baseId] = create2DArray(w, h);
-        baseBitmaps[baseId][y][x] = 1;
+        baseBitmaps[baseId][x][y] = 1;
         
-        if (shift === -2) shiftBitmaps['-2'][y][x] = 1;
-        if (shift === -1) shiftBitmaps['-1'][y][x] = 1;
-        if (shift === 1)  shiftBitmaps['1'][y][x] = 1;
+        if (shift === -2) shiftBitmaps['-2'][x][y] = 1;
+        if (shift === -1) shiftBitmaps['-1'][x][y] = 1;
+        if (shift === 1)  shiftBitmaps['1'][x][y] = 1;
       }
     }
     
     let normalSqCount = 0;
     let doubleSqCount = 0;
 
-    // Run DP solving on the base layers
     for(const baseId in baseBitmaps){
-      normalSqCount += solve(baseBitmaps[baseId], h, w);
+      normalSqCount += solve(baseBitmaps[baseId], w, h);
     }
 
-    // Run DP on shading layers
-    doubleSqCount += solve(shiftBitmaps['-2'], h, w);         // s = -2 is doubleclick via solve()
-    normalSqCount += solveDisjoint(shiftBitmaps['-1'], h, w); // s = -1 via solveDisjoint()
-    normalSqCount += solve(shiftBitmaps['1'], h, w);          // s =  1 via solve()
+    doubleSqCount += solve(shiftBitmaps['-2'], w, h);
+    normalSqCount += solveDisjoint(shiftBitmaps['-1'], w, h);
+    normalSqCount += solve(shiftBitmaps['1'], w, h);
 
-    // Base math: square uses 2 ticks per action delay
     const delayMillis = 160;
     let totalMillis = (normalSqCount * delayMillis * 2) + (doubleSqCount * delayMillis * 4);
     
