@@ -1,0 +1,5 @@
+
+bottom left pixel rotations:
+	XRot: 32.304527
+	YRot: -37.59621
+

@@ -1,22 +1,45 @@
 package anax.autopainter.client;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 
+import org.jetbrains.annotations.Nullable;
+
+import com.llamalad7.mixinextras.lib.apache.commons.ArrayUtils;
+
+import anax.autopainter.client.SquareCoverSolver.Square;
+import it.unimi.dsi.fastutil.Hash;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.entity.decoration.ItemFrame;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.MapItem;
+import net.minecraft.world.level.saveddata.maps.MapId;
+
 import static anax.autopainter.client.MagicConstants.yawBounds;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 
 class AutopaintingSession{
 
+	public static final int MAX_BRUSH_SIZE = 5;
+	private static final int DARKENING_SQUARES_INDEX = 0;
+	private static final int LIGHTENING_SQUARES_INDEX = 1;
+
+	private ArrayList<Square>[][] squares = new ArrayList[BasicColor.colors.length][MAX_BRUSH_SIZE];
+	private ArrayList<Square>[][] shadingSquares = new ArrayList[2][MAX_BRUSH_SIZE];
+
 	private DyeColor[][] colorMatrix;
-	private boolean[][] doneShading;
+	private PrintableImage image;
 
 	public volatile boolean paused = false;
 	public volatile boolean ended = false;
@@ -29,12 +52,9 @@ class AutopaintingSession{
 
 	AutopaintingSession(PrintableImage img){
 		DyeColor[][] mat = img.colorMatrix;
+		this.image = img;
 
 		this.colorMatrix = mat;
-		this.doneShading = new boolean[mat.length][];
-		for(int i = 0; i < mat.length; i++){
-			doneShading[i] = new boolean[mat[i].length];
-		}
 
 		for(DyeColor[] colors : mat){
 			for(DyeColor color : colors){
@@ -47,6 +67,242 @@ class AutopaintingSession{
 				toApply.add(color.base);
 			}
 		}
+
+		for(ArrayList<Square>[] colorSquares : squares){
+			for(int i = 0; i < colorSquares.length; i++){
+				colorSquares[i] = new ArrayList<Square>();
+			}
+		}
+		for(ArrayList<Square>[] shadeSquares : shadingSquares){
+			for(int i = 0; i < shadeSquares.length; i++){
+				shadeSquares[i] = new ArrayList<Square>();
+			}
+		}
+
+		boolean[][] bitmap = new boolean[mat.length][mat[0].length];
+		for(BasicColor color : toApply){
+			for(int x = 0; x < mat.length; x++){
+				for(int y = 0; y < mat[0].length; y++){
+					bitmap[x][y] = colorMatrix[x][y].base == color;
+				}
+			}
+			List<Square> result = SquareCoverSolver.solve(bitmap);
+			for(Square square : result){
+				squares[color.index][square.size - 1].add(square);
+			}
+		}
+		for(int s = -2; s < 2; s++){
+			if(s == 0){
+				continue;
+			}
+			for(int x = 0; x < mat.length; x++){
+				for(int y = 0; y < mat[0].length; y++){
+					bitmap[x][y] = colorMatrix[x][y].shift == s;
+				}
+			}
+			List<Square> result = s == -1 ? 
+				SquareCoverSolver.solveDisjoint(bitmap)
+			:	SquareCoverSolver.solve(bitmap);
+
+		for(Square square : result){
+				square.isDoubleClick = s == -2;
+				int idx = s < 0 ? DARKENING_SQUARES_INDEX : LIGHTENING_SQUARES_INDEX;
+				shadingSquares[idx][square.size - 1].add(square);
+			}
+		}
+		checkAgainstMap();
+	}
+
+	static boolean isDone(Square square, PrintableImage source, PrintableImage dest, boolean checkShading){
+
+		for(int dx = 0; dx < square.size; dx++){
+			for(int dy = 0; dy < square.size; dy++){
+				int x = square.x + dx;
+				int y = square.y + dy;
+				DyeColor scolor = source.colorMatrix[x][y];
+				DyeColor dcolor = dest.colorMatrix[x][y];
+
+				if (scolor.base != dcolor.base){
+					// sendMessage("debug: " + scolor.base.dye.toString() + " != " + dcolor.base.dye.toString());
+					return false;
+				}
+
+				if(dcolor.shift != 0 && (dcolor.shift != scolor.shift)){
+					// sendMessage("debug: " + dcolor.base.dye.toString() + " with shift " + dcolor.shift + " does not match " + scolor.shift);
+					return false;
+				}
+
+				if(checkShading && (!scolor.equals(dcolor))){
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+	boolean willInterfere(Square square, PrintableImage source, PrintableImage dest, boolean isLightening){
+		for(int dx = 0; dx < square.size; dx++){
+			for(int dy = 0; dy < square.size; dy++){
+				int x = square.x + dx;
+				int y = square.y + dy;
+				DyeColor scolor = source.colorMatrix[x][y];
+				DyeColor dcolor = dest.colorMatrix[x][y];
+				if(scolor.base != dcolor.base){
+					continue;
+				}
+				int offset = isLightening ? 1 : -1;
+				if(square.isDoubleClick){
+					offset *= 2;
+				}
+				int finalShift = Math.clamp(dcolor.shift + offset, -2, 1);
+				if(finalShift != scolor.shift){
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	boolean checkAgainstMap(){
+		boolean changed = false;
+		ItemFrame frame = findMap();
+		if(frame == null){
+			sendMessage("cannot find map to check against");
+			return false;
+		}
+		byte[] colors = mapColors(frame);
+		if(colors == null){
+			sendMessage("could not extract map data to check against");
+			return false;
+		}
+		HashSet<BasicColor> unfinished = new HashSet<>();
+
+		boolean recalculateShading = false;
+
+		PrintableImage mapImage = PrintableImage.fromColors(colors);
+		for(ArrayList<Square>[] sqss : squares){
+			for(ArrayList<Square> sqs : sqss){
+				for(Square sq : sqs){
+					boolean done = isDone(sq, image, mapImage, false);
+					if(!done && sq.done){
+						recalculateShading = true;
+					}
+					changed |= sq.done != done;
+					sq.done = done;
+					if(!sq.done){
+						unfinished.add(image.colorMatrix[sq.x][sq.y].base);
+					}
+				}
+			}
+		}
+
+		mapImage.applyAll(squares);
+
+		boolean unfinishedDarkening = false;
+		boolean unfinishedLightening = false;
+
+		for(int idx = 0; idx < 2; idx++){
+			ArrayList<Square>[] sqss = shadingSquares[idx];
+			for(ArrayList<Square> sqs : sqss){
+				for(Square sq : sqs){
+					boolean done = isDone(sq, image, mapImage, true);
+					changed |= sq.done != done;
+					sq.done = done;
+					if(!sq.done){
+						DyeColor color = image.colorMatrix[sq.x][sq.y];
+						unfinishedDarkening |= color.shift < 0;
+						unfinishedLightening |= color.shift > 0;
+						recalculateShading |= willInterfere(sq, image, mapImage, idx == LIGHTENING_SQUARES_INDEX);
+					}
+					if(recalculateShading){
+						break;
+					}
+				}
+				if(recalculateShading){
+					break;
+				}
+			}
+			if(recalculateShading){
+				break;
+			}
+		}
+		if(recalculateShading){
+			unfinishedLightening = false;
+			unfinishedDarkening = false;
+
+			for(ArrayList<Square>[] sqss : shadingSquares){
+				for(ArrayList<Square> sqs : sqss){
+					sqs.clear();
+				}
+			}
+			boolean[][] bitmap = new boolean[image.colorMatrix.length][image.colorMatrix[0].length];
+			for(int s = -2; s < 2; s++){
+				if(s == 0){
+					continue;
+				}
+				for(int x = 0; x < bitmap.length; x++){
+					for(int y = 0; y < bitmap[0].length; y++){
+						if(image.colorMatrix[x][y].shift != s){
+							bitmap[x][y] = false;
+							continue;
+						}
+
+
+						bitmap[x][y] = !image.colorMatrix[x][y].equals(mapImage.colorMatrix[x][y]);
+						if(bitmap[x][y]){
+							unfinishedDarkening |= s < 0;
+							unfinishedLightening |= s > 0;
+						}
+					}
+				}
+
+				List<Square> result = s == -1 ?
+					SquareCoverSolver.solveDisjoint(bitmap)
+				:	SquareCoverSolver.solve(bitmap);
+
+				int idx = s < 0 ? DARKENING_SQUARES_INDEX : LIGHTENING_SQUARES_INDEX;
+				for(Square sq : result){
+					sq.isDoubleClick = s == -2;
+					shadingSquares[idx][sq.size - 1].add(sq);
+				}
+			}
+		}
+		this.needDarkening = unfinishedDarkening;
+		this.needLightening = unfinishedLightening;
+		this.toApply = unfinished;
+		return changed;
+	}
+
+	static @Nullable ItemFrame findMap(){
+		Entity vehicle = Minecraft.getInstance().player.getVehicle();
+		if(vehicle instanceof ArmorStand){
+			ItemFrame frame = null;
+			Double closest = Double.POSITIVE_INFINITY;
+			for(Entity entity : Minecraft.getInstance().level.entitiesForRendering()){
+				if(entity instanceof ItemFrame fe){
+					Double distance = fe.position().distanceTo(vehicle.position());
+					if(distance < closest){
+						closest = distance;
+						frame = fe;
+					}
+				}
+			}
+			return frame;
+
+		}else{
+			sendMessage("could not find easel (are you sitting on one ?)");
+			return null;
+		}
+	}
+	
+	static @Nullable byte[] mapColors(ItemFrame frame){
+		try{
+			MapId mapid = frame.getFramedMapId(frame.getItem());
+			return MapItem.getSavedData(mapid, frame.level()).colors;
+
+		}catch(NullPointerException e){
+			return null;
+		}
 	}
 
 	private static float yawFor(int x){
@@ -54,11 +310,14 @@ class AutopaintingSession{
 	}
 
 	private static float pitchFor(int x, int y){
+		if(x == 0 && y == 127){
+			return 32.304527f;
+		}
 		float[] bounds = MagicConstants.getPitchBounds()[x];
 		return (bounds[y] + bounds[y + 1]) / 2f;
 	}
 
-	static void lookAndClick(int x, int y, int delayMillis){
+	static void look(int x, int y){
 		float yaw = yawFor(x);
 		float pitch = pitchFor(x, y);
 		Minecraft client = Minecraft.getInstance();
@@ -67,8 +326,20 @@ class AutopaintingSession{
 		}
 		client.player.setYRot(yaw);
 		client.player.setXRot(pitch);
-		client.player.connection.send(new ServerboundMovePlayerPacket.Rot(client.player.getYRot(), client.player.getXRot(), client.player.onGround(), client.player.horizontalCollision));
+		client.player.connection.send(new ServerboundMovePlayerPacket.Rot(
+					client.player.getYRot(),
+					client.player.getXRot(),
+					client.player.onGround(),
+					client.player.horizontalCollision)
+				);
+	}
 
+	static void lookAndClick(int x, int y, int delayMillis){
+		Minecraft client = Minecraft.getInstance();
+		if(client.player == null || client.gameMode == null){
+			return;
+		}
+		look(x, y);
 		delay(delayMillis);
 		client.player.swing(InteractionHand.MAIN_HAND);
 		delay(delayMillis);
@@ -121,6 +392,15 @@ class AutopaintingSession{
 		Autopainter.sendMessage(text);
 	}
 
+	static void sendCommand(String command){
+		Minecraft.getInstance().player.connection.sendCommand(command);
+	}
+
+	static void setBrushSize(int size){
+		delay(delayMillis);
+		sendCommand("art brushsize " + size);
+	}
+
 	void reportRemainingDyes(){
 		sendMessage("the following dyes are required: ");
 		for(BasicColor color : toApply){
@@ -128,23 +408,54 @@ class AutopaintingSession{
 		}
 	}
 
-	void reportEstimatedDuration(){
+	String estimatedDuration(){
 		long millis = 0;
-		for(int x = 0; x < colorMatrix.length; x++){
-			for(int y = 0; y < colorMatrix[x].length; y++){
-				if(toApply.contains(colorMatrix[x][y].base)){
-					millis += delayMillis * 2;
-				}
-				if(!doneShading[x][y]){
-					millis += delayMillis * 2 * Math.abs(colorMatrix[x][y].shift);
+		for(ArrayList<Square>[] sqss : squares){
+			for(ArrayList<Square> sqs : sqss){
+				for(Square sq : sqs){
+					if(!sq.done){
+						millis += delayMillis * 2;
+					}
 				}
 			}
 		}
-		sendMessage("estimated time: " + formatDuration(millis));
+		for(ArrayList<Square>[] sqss : shadingSquares){
+			for(ArrayList<Square> sqs : sqss){
+				for(Square sq : sqs){
+					if(!sq.done){
+						millis += delayMillis * 2;
+						if(sq.isDoubleClick){
+							millis += delayMillis * 2;
+						}
+					}
+				}
+			}
+		}
+		return formatDuration(millis);
+	}
+
+	BasicColor mostCommonColor(){
+		HashMap<BasicColor, Integer> counts = new HashMap<>();
+		BasicColor mostCommon = null;
+		Integer topCount = 0;
+		for(DyeColor[] row : colorMatrix){
+			for(DyeColor color : row){
+				Integer count = counts.getOrDefault(color.base, 0) + 1;
+				counts.put(color.base, count);
+				if(count > topCount){
+					mostCommon = color.base;
+					topCount = count;
+				}
+			}
+		}
+		return mostCommon;
 	}
 
 	void paint(){
 		while(!ended){
+			if(checkAgainstMap()){
+				sendMessage("new estimated time: " + estimatedDuration());
+			}
 			HashSet<Item> availableItems = new HashSet<>(
 					Minecraft.getInstance()
 					.player
@@ -181,6 +492,7 @@ class AutopaintingSession{
 						if(needLightening){
 							sendMessage(ColorManager.LIGHTENING_ITEM.toString());
 						}
+						sendMessage("use /autopaint resume after you have obtained the items");
 						paused = true;
 					}
 
@@ -195,15 +507,19 @@ unpaused:   while(!paused && !ended){
 				if(!applyNow.isEmpty()){
 					//paint color
 					BasicColor color = applyNow.iterator().next();
-					for(int x = 0; x < colorMatrix.length && !paused && !ended; x++){
-						for(int y = 0; y < colorMatrix[x].length && !paused && !ended; y++){
-							if(colorMatrix[x][y].base != color){
+					for(int size = 0; size < MAX_BRUSH_SIZE && !paused && !ended; size++){
+						int sqlen = squares[color.index][size].size();
+						if(sqlen > 0) setBrushSize(size + 1);
+						for(int idx = 0; idx < sqlen && !paused && !ended; idx++){
+							Square square = squares[color.index][size].get(idx);
+							if(square.done){
 								continue;
 							}
 							if(!findAndHold(color.dye)){
 								break unpaused;
 							}
-							lookAndClick(x, y, delayMillis);
+							lookAndClick(square.originX, square.originY, delayMillis);
+							square.done = true;
 						}
 					}
 					if(!ended && !paused){
@@ -211,22 +527,54 @@ unpaused:   while(!paused && !ended){
 						toApply.remove(color);
 					}
 
+					// for(int x = 0; x < colorMatrix.length && !paused && !ended; x++){
+					// 	for(int y = 0; y < colorMatrix[x].length && !paused && !ended; y++){
+					// 		if(colorMatrix[x][y].base != color){
+					// 			continue;
+					// 		}
+					// 		if(!findAndHold(color.dye)){
+					// 			break unpaused;
+					// 		}
+					// 		lookAndClick(x, y, delayMillis);
+					// 	}
+					// }
+
 				} else if( toApply.isEmpty() && ((needLightening && canLighten) || (needDarkening && canDarken)) ) {
-					boolean ligtening = (needLightening && canLighten);
-					for(int x = 0; x < colorMatrix.length && !paused && !ended; x++){
-						for(int y = 0; y < colorMatrix[x].length && !paused && !ended; y++){
-							if(!doneShading[x][y] && ((ligtening && colorMatrix[x][y].shift > 0) || (!ligtening && colorMatrix[x][y].shift < 0))){
-								if(!findAndHold(ligtening ? ColorManager.LIGHTENING_ITEM : ColorManager.DARKENING_ITEM)){
-									break unpaused;
-								}
-								for(int s = 0; s < Math.abs(colorMatrix[x][y].shift); s++){
-									lookAndClick(x, y, delayMillis);
-								}
-								doneShading[x][y] = true;
+					boolean lightening = (needLightening && canLighten);
+					int idx = lightening ? LIGHTENING_SQUARES_INDEX : DARKENING_SQUARES_INDEX;
+					for(int size = 0; size < MAX_BRUSH_SIZE && !paused && !ended; size++){
+						int sqlen = shadingSquares[idx][size].size();
+						if(sqlen > 0) setBrushSize(size + 1);
+						for(int sqidx = 0; sqidx < sqlen && !paused && !ended; sqidx++){
+							Square square = shadingSquares[idx][size].get(sqidx);
+							if(square.done){
+								continue;
 							}
+							if(!findAndHold(lightening ? ColorManager.LIGHTENING_ITEM : ColorManager.DARKENING_ITEM)){
+								break unpaused;
+							}
+							lookAndClick(square.originX, square.originY, delayMillis);
+							if(square.isDoubleClick){
+								lookAndClick(square.originX, square.originY, delayMillis);
+							}
+							square.done = true;
 						}
 					}
-					if(ligtening){
+
+					// for(int x = 0; x < colorMatrix.length && !paused && !ended; x++){
+					// 	for(int y = 0; y < colorMatrix[x].length && !paused && !ended; y++){
+					// 		if(!doneShading[x][y] && ((lightening && colorMatrix[x][y].shift > 0) || (!lightening && colorMatrix[x][y].shift < 0))){
+					// 			if(!findAndHold(lightening ? ColorManager.LIGHTENING_ITEM : ColorManager.DARKENING_ITEM)){
+					// 				break unpaused;
+					// 			}
+					// 			for(int s = 0; s < Math.abs(colorMatrix[x][y].shift); s++){
+					// 				lookAndClick(x, y, delayMillis);
+					// 			}
+					// 			doneShading[x][y] = true;
+					// 		}
+					// 	}
+					// }
+					if(lightening){
 						needLightening = false;
 					}else{
 						needDarkening = false;

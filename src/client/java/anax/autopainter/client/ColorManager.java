@@ -8,6 +8,7 @@ import net.minecraft.world.item.Items;
 class BasicColor {
 	int id;
 	public Item dye;
+	public int index;
 
 	public BasicColor(int id, Item dye){
 		this.id = id;
@@ -78,7 +79,7 @@ class BasicColor {
 			RAW_IRON 			= new BasicColor(60, Items.RAW_IRON),
 			GLOW_LICHEN 		= new BasicColor(61, Items.GLOW_LICHEN);
 
-	static BasicColor[] colors = new BasicColor[] { BLACK, RED, GREEN, BROWN, BLUE, PURPLE, CYAN, SILVER, GRAY, PINK, LIME,
+	public static BasicColor[] colors = new BasicColor[] { BLACK, RED, GREEN, BROWN, BLUE, PURPLE, CYAN, SILVER, GRAY, PINK, LIME,
 			YELLOW, LIGHT_BLUE, MAGENTA, ORANGE, WHITE, CREAM, COFFEE, GRAPHITE, GUNPOWDER, MAROON, AQUA, GRASS, GOLD,
 			VOID, LIGHT_GRAY, ICE, LEAVES, SNOW, STONE, WATER, DARK_WOOD, BRICK, LAPIS, EMERALD, LIGHT_WOOD,
 			WHITE_TERRACOTTA, ORANGE_TERRACOTTA, MAGENTA_TERRACOTTA, LIGHT_BLUE_TERRACOTTA, YELLOW_TERRACOTTA,
@@ -89,7 +90,11 @@ class BasicColor {
 
 	};
 
-
+	static{
+		for(int i = 0; i < colors.length; i++){
+			colors[i].index = i;
+		}
+	}
 
 }
 
@@ -121,6 +126,14 @@ class DyeColor{
 
 	}
 
+	@Override
+	public boolean equals(Object o){
+		if(o instanceof DyeColor other){
+			return color.equals(other.color);
+		}
+		return false;
+	}
+
 	private static DyeColor[] possibleColors = null;
 
 	public static DyeColor[] getPossibleColors(){
@@ -134,6 +147,11 @@ class DyeColor{
 			}
 		}
 		return possibleColors;
+	}
+
+
+	public static DyeColor unshaded(BasicColor base){
+		return getPossibleColors()[base.id * 4 + 1];
 	}
 
 	public static Color[] mcPalette = new Color[] {

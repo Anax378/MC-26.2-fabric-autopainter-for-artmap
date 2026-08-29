@@ -16,8 +16,8 @@ class Autopainter {
 		return INSTANCE;
 	}
 
-	private Thread paintingThread = null;
-	private AutopaintingSession session = null;
+	Thread paintingThread = null;
+	AutopaintingSession session = null;
 
 	static void sendMessage(String text){
 		Minecraft.getInstance().player.sendSystemMessage(Component.literal("[autopainter] " + text));
@@ -70,12 +70,12 @@ class Autopainter {
 		}
 		if(paintingThread == null && !session.paused){
 			sendMessage("session loaded (waiting for /autopaint start)");
-			session.reportEstimatedDuration();
+			sendMessage("estimated time: " + session.estimatedDuration());
 			return;
 		}
 		if(session.paused){
 			sendMessage("session is paused");
-			session.reportEstimatedDuration();
+			sendMessage("estimated time: " + session.estimatedDuration());
 			return;
 		}
 		if(session.ended){
@@ -83,26 +83,7 @@ class Autopainter {
 			return;
 		}
 		sendMessage("session is running");
-		session.reportEstimatedDuration();
-	}
-
-	public void skip(String itemString){
-		if(session == null){
-			sendMessage("no session is active");
-			return;
-		}
-		if(!session.paused){
-			sendMessage("please pause the session first");
-			return;
-		}
-		for(BasicColor color: session.toApply){
-			if(color.dye.toString().equals(itemString)){
-				session.toApply.remove(color);
-				sendMessage("skipping color");
-				return;
-			}
-		}
-		sendMessage("color not found");
+		sendMessage("estimated time: " + session.estimatedDuration());
 	}
 
 	public void load(PrintableImage img){
@@ -110,7 +91,12 @@ class Autopainter {
 		session = new AutopaintingSession(img);
 		sendMessage("loaded sucessfully");
 		session.reportRemainingDyes();
-		session.reportEstimatedDuration();
+		sendMessage("estimated time: " + session.estimatedDuration());
+		BasicColor mostCommon = session.mostCommonColor();
+		if(mostCommon != null){
+			sendMessage(mostCommon.dye.toString() + " is the most common color in this image.");
+			sendMessage("you start with this color as the background to save time.");
+		}
 	}
 
 	public void start(){

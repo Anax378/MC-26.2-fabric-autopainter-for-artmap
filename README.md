@@ -22,7 +22,7 @@ A preview tool for painted images is available here: https://anax378.github.io/M
    ```
    /autopaint start
    ```
-   **Do not move your cursor while painting is in progress.** It's highly recommended to go into freecam, open your menu with `esc`, or otherwise prevent interfering with your player rotation.
+   **Do not move your cursor while painting is in progress.** It's highly recommended to go into freecam, open your menu with `esc`, open chat, or otherwise prevent interfering with your player rotation.
 
 The mod automatically detects dyes in your inventory and starts with whatever is available. It will pause automatically if it can't continue without additional dyes/items.
 
@@ -34,15 +34,9 @@ The mod automatically detects dyes in your inventory and starts with whatever is
 | `/autopaint start` | Start painting the loaded image. |
 | `/autopaint pause` | Pause the current painting session. Note: this does **not** save progress for the color currently being painted — that color will restart from the beginning when you resume. |
 | `/autopaint resume` | Resume a paused session, or continue after the mod requests more dyes/items. |
-| `/autopaint skip <item>` | Skip a specific dye/item. Requires the fully qualified item ID (e.g. `minecraft:snow` or `minecraft:light_gray_dye`) — it must match exactly. Example: `/autopaint skip minecraft:ender_eye` |
 | `/autopaint status` | Check the current status: paused, running, not loaded, or waiting to start. If a session is active, this also shows the estimated remaining time. |
 
-## Known Issues
-
-- Some pixels are occasionally missed — usually 2–3 per image — and require manual correction.
-- The bottom-left pixel is frequently missed and often needs manual correction.
-
-## Showcase
+## Showcase (OLD)
 
 ![Showcase](./media/autopainter-recording.gif)
 
