@@ -341,7 +341,10 @@ class AutopaintingSession{
 		}
 		look(x, y);
 		delay(delayMillis);
-		client.player.swing(InteractionHand.MAIN_HAND);
+		ItemFrame frame = findMap();
+		if(frame != null){
+			client.gameMode.interact(client.player, frame, new net.minecraft.world.phys.EntityHitResult(frame, frame.position()), InteractionHand.MAIN_HAND);
+		}
 		delay(delayMillis);
 	}
 
